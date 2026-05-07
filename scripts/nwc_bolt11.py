@@ -109,10 +109,10 @@ def _parse_amount_from_hrp(hrp):
         'p': 0,  # pico → < 1 msat (use msat)
     }
     msat_scales = {
-        'm': 100_000_000_000,
-        'u': 100_000_000,
-        'n': 100_000,
-        'p': 100,
+        'm': 100_000_000,
+        'u': 100_000,
+        'n': 100,
+        'p': 0,  # pico → sub-millisatoshi, rounds to 0
     }
 
     if multiplier in ('m', 'u'):

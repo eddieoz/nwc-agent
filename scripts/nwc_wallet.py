@@ -273,8 +273,8 @@ def ecprivkey_from_bytes(privkey_bytes):
     ec_der = _make_ec_private_key_der(privkey_bytes)
 
     r = subprocess.run([
-        "openssl", "ec", "-pubout", "-conv_form", "compressed", "-outform",
-        "DER"
+        "openssl", "ec", "-pubout", "-inform", "DER", "-conv_form",
+        "compressed", "-outform", "DER"
     ],
                        capture_output=True,
                        timeout=10,
