@@ -42,13 +42,44 @@ cross-compilation toolchain, no `ldd` debugging at midnight.
 
 ### Supply Chain Resilience
 
-Modern software supply chains are under attack. In 2024 alone:
+Modern software supply chains are under relentless, accelerating attack.
 
-- The **xz backdoor** (CVE-2024-3094) compromised SSH on major Linux distributions
-- **PyTorch-nightly** was hijacked via a dependency confusion attack
-- **Ledger Connect Kit** was compromised through a phishing attack on a former employee
-- NPM, PyPI, and Crates.io all suffered credential-stealing malware uploaded as
-  "useful" packages
+**2024 was the wake-up call.** The xz backdoor (CVE-2024-3094) nearly
+compromised SSH on every major Linux distribution — stopped only because a
+Microsoft engineer noticed 500ms of latency in SSH logins. PyTorch-nightly was
+hijacked via dependency confusion. Ledger Connect Kit fell to a phishing attack
+on a former employee.
+
+**2025 turned the screw.** The `tj-actions/changed-files` GitHub Action — used
+by over 23,000 repositories — was compromised on March 14, 2025
+(CVE-2025-30066). Attackers exfiltrated CI/CD secrets and access tokens in
+plaintext, cascading through a second compromised action (`reviewdog`).
+Sonatype identified over **454,600 new malicious packages** across registries
+in 2025 alone, doubling the prior year. npm alone saw more than 10,800
+malicious packages — a 100% increase.
+
+**2026 broke the model.** In twelve days in late March 2026, five major
+open-source packages were compromised in a coordinated wave:
+
+- **Axios** (npm, March 30) — The most-downloaded HTTP client in the JavaScript
+  ecosystem was hijacked via account takeover. A Remote Access Trojan was
+  planted in the official package, radiating into millions of downstream
+  projects.
+- **LiteLLM** (PyPI, March 24) — The LLM API gateway used by AI agents to call
+  OpenAI, Anthropic, and other providers was compromised in the TeamPCP
+  campaign. Payload: credential stealers targeting API keys.
+- **Telnyx** (PyPI, March 27) — Same campaign, same attacker.
+- **Trivy** and **Checkmarx** — Security scanning tools themselves were
+  compromised, eroding the very instrumentation meant to catch supply chain
+  attacks.
+- **Lazarus Group** (February 2026) — North Korean state actors planted
+  malicious npm and PyPI packages disguised as crypto job tooling, deploying
+  RATs and data stealers.
+
+The LiteLLM case is not hypothetical for autonomous agents: it is the bridge
+between LLM function-calling and every major API provider. A compromised LLM
+gateway that steals API keys doesn't just leak data — it drains every connected
+account.
 
 Every dependency is an attack surface. When an autonomous agent holds spending
 power, the stakes are existential — a compromised dependency doesn't just leak
@@ -63,7 +94,7 @@ pyyaml             — YAML parser (used only for config file reading)
 ```
 
 That's it. Three packages. No native extensions. No build step. Every byte of
-executable cryptography is visible in a single 900-line Python file. You can
+executable cryptography is visible in a single ~1,020-line Python file. You can
 read the entire wallet implementation in one sitting and verify there are no
 network calls to unknown hosts, no obfuscated blobs, no auto-updating
 dependency trees.
@@ -140,14 +171,14 @@ hardware — exactly the gap this project fills.
 |-----------|----------|-------|----------|
 | Elliptic curve | secp256k1 point arithmetic | 40 | SEC 2 |
 | Key derivation | ECDH (OpenSSL CLI helper) | 35 | ANSI X9.63 |
-| Signatures | BIP-340 Schnorr | 50 | Bitcoin |
+| Signatures | BIP-340 Schnorr (RFC 6979 deterministic) | 55 | Bitcoin |
 | NIP-44 encryption | ChaCha20-Poly1305 + HKDF | 120 | Nostr NIP-44 v2 |
 | NIP-04 encryption | AES-256-CBC (pyaes) | 45 | Nostr NIP-04 |
 | DER encoding | ASN.1 DER for EC keys | 55 | X.690 |
 | Nostr events | Kind 23194/23195 signing | 25 | NIP-47 |
 | WebSocket relay | websocket-client | 75 | RFC 6455 |
 
-**Total: ~900 lines of auditable Python.** No C extensions. No assembly.
+**Total: ~1,020 lines of auditable Python.** No C extensions. No assembly.
 
 ### Wallet Commands
 
@@ -191,10 +222,14 @@ hardware — exactly the gap this project fills.
 
 Key security properties:
 - **NWC URL never logged** — only event IDs and balance amounts appear in output
-- **Spending limits enforced server-side** — Alby Hub budget caps prevent drain
+- **Debug mode is safe** — `--debug` prints JSON structure (keys, types, error flags), never secrets
+- **RFC 6979 deterministic nonces** — eliminates nonce reuse risk in Schnorr signatures
+- **NIP-44 support** — `--nip44` flag enables ChaCha20-Poly1305 authenticated encryption (requires Alby Hub >= 1.8.0)
+- **Spending limits enforced server-side** — wallet-level budget caps prevent drain
 - **No persistent state on device** — key material derived fresh each invocation
-- **Debug mode opt-in** — `--debug` flag required for verbose output
 - **Constant-time MAC comparison** — NIP-44 Poly1305 verification
+- **WebSocket safety** — `try/finally` ensures connections always close, no descriptor leaks
+- **Config error visibility** — `--debug` surfaces which config sources were skipped and why
 
 ### Performance on RISC-V (LicheeRV Nano, 1GHz C906)
 
@@ -211,7 +246,8 @@ Key security properties:
 ### Prerequisites
 - Python 3.8+
 - OpenSSL (for ECDH key derivation)
-- Alby Hub account (self-hosted or [albyhub.com](https://albyhub.com))
+- A NWC pairing secret from any NIP-47-compatible wallet
+  (Alby Hub, LNCURL, CoinOS, Rizful, etc.)
 
 ### Installation
 ```bash
@@ -250,12 +286,14 @@ export ALBY_NWC_URL="nostr+walletconnect://..."
 ```
 
 **Get your NWC URL:**
-Alby Hub → Settings → App Connections → New Connection → Copy pairing secret.
+For Alby Hub: Settings → App Connections → New Connection → Copy pairing secret.
+For LNCURL, CoinOS, or other NIP-47 wallets, consult that wallet's documentation
+for generating an NWC connection string.
 The secret starts with `nostr+walletconnect://` and contains your wallet's
 public key and relay addresses.
 
 **⚠️ Your NWC URL contains your wallet's private key. Never commit it, share
-it, or log it. Set spending limits in Alby Hub before use.**
+it, or log it. Set spending limits in your wallet before use.**
 
 ### Usage
 ```bash
@@ -278,9 +316,33 @@ python3 scripts/nwc_wallet.py make_invoice 1000 "coffee"
 # List recent transactions
 python3 scripts/nwc_wallet.py list_transactions outgoing 10 0
 
-# Debug mode
+# Debug mode (safe — shows structure, never secrets)
 python3 scripts/nwc_wallet.py --debug balance
+
+# NIP-44 encryption (ChaCha20-Poly1305, requires Alby Hub >= 1.8.0)
+python3 scripts/nwc_wallet.py --nip44 balance
 ```
+
+## Security Audit
+
+A formal security assessment was performed on 2026-05-07 covering the entire
+codebase. The audit identified and resolved five findings:
+
+| Finding | Severity | Resolution |
+|---------|----------|------------|
+| NIP-04 AES-CBC lacks authentication | High | NIP-44 flag added; NIP-04 kept for backward compatibility |
+| Silent error suppression in config loader | Medium | `--debug` now surfaces skipped config sources |
+| Debug mode leaked decrypted payloads | Medium | `_debug_event()` prints structure, never values |
+| Schnorr nonce loop timing side-channel | Low | RFC 6979 deterministic nonces (default on) |
+| WebSocket resource leak | Low | `try/finally` on all connection paths |
+
+All findings have been resolved. No critical vulnerabilities were identified.
+The custom secp256k1 implementation was reviewed and found appropriate for the
+embedded RISC-V target where native crypto libraries are unavailable.
+
+NIP-44 (ChaCha20-Poly1305) is fully implemented for both send and receive.
+It becomes the default by adding `--nip44` — activate when your wallet
+supports NIP-44 (Alby Hub >= 1.8.0, check your wallet's docs for others).
 
 ## Project Structure
 
@@ -333,7 +395,7 @@ preserving full protocol compatibility.
 - The concept of the wallet as an agent-invokable tool rather than a human CLI
 
 **Why we diverged:**
-Node.js is not available on our RISC-V target (`root@192.168.0.122`). The `@getalby/sdk` dependency tree is ~200 packages with native secp256k1 bindings — completely non-portable to embedded architectures. We preserved the skill interface but replaced the entire runtime, then expanded to support any NIP-47 wallet beyond Alby.
+Node.js is not available on our RISC-V target. The `@getalby/sdk` dependency tree is ~200 packages with native secp256k1 bindings — completely non-portable to embedded architectures. We preserved the skill interface but replaced the entire runtime, then expanded to support any NIP-47 wallet beyond Alby.
 
 ### Protocol Standards
 

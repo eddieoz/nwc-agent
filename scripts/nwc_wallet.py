@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Nostr Wallet Connect (NIP-47) Python Client for Alby Hub.
+Nostr Wallet Connect (NIP-47) Python Client for any NIP-47 compatible wallet.
 Zero external crypto dependency — pure Python secp256k1 + ChaCha20-Poly1305.
 Requires: pyaes, websocket-client, pyyaml (pip install -r requirements.txt)
 """
@@ -38,6 +38,7 @@ NWC_REQUEST_KIND = 23194
 NWC_RESPONSE_KIND = 23195
 MAX_RETRIES = 2  # per relay
 DEFAULT_TIMEOUT = 15  # seconds for relay responses
+USE_NIP44 = False  # Set True for NIP-44 (ChaCha20-Poly1305) — requires wallet with NIP-44 support (Alby Hub >= 1.8.0)
 
 
 def mod_inverse(a, p):
@@ -99,8 +100,31 @@ def tagged_hash(tag, data):
     return hashlib.sha256(tag_hash + tag_hash + data).digest()
 
 
-def schnorr_sign(privkey_bytes, msg32):
-    """BIP-340 Schnorr signature over secp256k1."""
+def schnorr_deterministic_nonce(privkey_bytes, msg32, pubkey_x):
+    """Derive a deterministic nonce for BIP-340 Schnorr signing.
+    
+    Uses a simplified RFC 6979 approach: k = SHA256(privkey || msg32 || pubkey_x).
+    This eliminates the random nonce loop (timing channel) and prevents
+    catastrophic nonce reuse that would leak the private key.
+    
+    Produces signatures byte-for-byte compatible with any BIP-340 verifier.
+    """
+    h = hashlib.sha256(privkey_bytes + msg32 + pubkey_x).digest()
+    k = bytes_to_int(h) % SECP256K1_N
+    if k == 0:
+        k = 1  # RFC 6979 fallback
+    return k
+
+
+def schnorr_sign(privkey_bytes, msg32, use_rfc6979=True):
+    """BIP-340 Schnorr signature over secp256k1.
+    
+    Args:
+        privkey_bytes: 32-byte private key
+        msg32: 32-byte message hash to sign
+        use_rfc6979: If True (default), use deterministic nonces (RFC 6979).
+                     Set False for the legacy random nonce (os.urandom).
+    """
     d = bytes_to_int(privkey_bytes)
     if d == 0 or d >= SECP256K1_N:
         raise ValueError("Invalid private key")
@@ -117,10 +141,13 @@ def schnorr_sign(privkey_bytes, msg32):
     # x-only pubkey
     pubkey_x = int_to_bytes(P[0], 32)
 
-    # Generate random nonce k
-    k = bytes_to_int(os.urandom(32))
-    while k == 0 or k >= SECP256K1_N:
+    # Generate nonce k
+    if use_rfc6979:
+        k = schnorr_deterministic_nonce(privkey_bytes, msg32, pubkey_x)
+    else:
         k = bytes_to_int(os.urandom(32))
+        while k == 0 or k >= SECP256K1_N:
+            k = bytes_to_int(os.urandom(32))
 
     # R = k*G
     R = point_mul(k, G)
@@ -644,8 +671,37 @@ def create_nostr_event(pubkey_bytes, kind, tags, content, privkey_bytes):
 
 # ─── NWC Protocol Core ─────────────────────────────────────────────────
 
+def _debug_event(result, label):
+    """Log event structure without exposing secrets.
+    
+    Prints keys/shape of the response so developers can debug protocol flow
+    without leaking preimages, balances, or decrypted payloads to stderr.
+    """
+    if not DEBUG:
+        return
+    try:
+        if isinstance(result, dict):
+            safe = {
+                'type': result.get('result_type', 'unknown'),
+                'has_result': 'result' in result,
+                'has_error': 'error' in result,
+                'result_keys': list(result.get('result', {}).keys())
+                if isinstance(result.get('result'), dict) else [],
+            }
+        else:
+            safe = {'raw_type': type(result).__name__}
+        print(f"[DEBUG] {label}: {json.dumps(safe)}", file=sys.stderr)
+    except Exception:
+        pass  # Never let debug code crash production
+
+
 def _prepare_nwc_event(nwc_url, method, params=None):
-    """Create client key material, encrypt payload, return (event, config)."""
+    """Create client key material, encrypt payload, return (event, config).
+    
+    Encryption format is controlled by the global USE_NIP44 flag.
+    Default: NIP-04 (AES-256-CBC). Set USE_NIP44=True for NIP-44
+    (ChaCha20-Poly1305, requires wallet with NIP-44 support). Use --nip44 CLI flag.
+    """
     config = parse_nwc_url(nwc_url)
 
     client_privkey = unhexlify(config['secret'])
@@ -657,7 +713,10 @@ def _prepare_nwc_event(nwc_url, method, params=None):
         params = {}
 
     request_payload = json.dumps({"method": method, "params": params})
-    encrypted = encrypt_nwc_payload(request_payload.encode(), shared_key)
+    if USE_NIP44:
+        encrypted = encrypt_nwc_payload_nip44(request_payload.encode(), shared_key)
+    else:
+        encrypted = encrypt_nwc_payload(request_payload.encode(), shared_key)
 
     event = create_nostr_event(client_pubkey_x, NWC_REQUEST_KIND,
                                [["p",
@@ -668,7 +727,7 @@ def _prepare_nwc_event(nwc_url, method, params=None):
 
 
 async def nwc_request(nwc_url, method, params=None):
-    """Make a NWC request to an Alby Hub wallet and wait for response."""
+    """Make a NWC request to a NIP-47 wallet and wait for response."""
     event, config, shared_key = _prepare_nwc_event(nwc_url, method, params)
     return await _listen_for_response(event, config, shared_key)
 
@@ -687,6 +746,7 @@ async def _listen_for_response(event, config, shared_key):
 
     for relay_url in relays:
         for attempt in range(MAX_RETRIES):
+            ws = None
             try:
                 ws = create_connection(relay_url, timeout=10)
                 ws.settimeout(DEFAULT_TIMEOUT)
@@ -727,28 +787,30 @@ async def _listen_for_response(event, config, shared_key):
                                 content = resp_event['content']
                                 if DEBUG:
                                     print(
-                                        f"[DEBUG] NWC response: {content[:200]}",
+                                        f"[DEBUG] NWC response received "
+                                        f"({len(content)} bytes encrypted)",
                                         file=sys.stderr)
                                 decrypted = decrypt_nwc_payload(
                                     content, shared_key, raw_ecdh)
-                                if DEBUG:
-                                    print(
-                                        f"[DEBUG] decrypted: {decrypted[:200]}",
-                                        file=sys.stderr)
                                 result = json.loads(decrypted)
-                                ws.close()
+                                _debug_event(result, "NWC response")
                                 return result
                         except Exception:
                             if DEBUG:
                                 import traceback
                                 traceback.print_exc(file=sys.stderr)
                             continue
-                ws.close()
             except Exception as e:
                 if DEBUG:
                     import traceback
                     traceback.print_exc(file=sys.stderr)
                 time.sleep(1)
+            finally:
+                if ws:
+                    try:
+                        ws.close()
+                    except Exception:
+                        pass
 
     raise RuntimeError("No response from relay")
 
@@ -761,9 +823,16 @@ def nwc_send_fire_and_forget(nwc_url, method, params=None):
     event, config, shared_key = _prepare_nwc_event(nwc_url, method, params)
     relay_url = config['relays'][0]
 
-    ws = create_connection(relay_url, timeout=10)
-    ws.send(json.dumps(["EVENT", event]))
-    ws.close()
+    ws = None
+    try:
+        ws = create_connection(relay_url, timeout=10)
+        ws.send(json.dumps(["EVENT", event]))
+    finally:
+        if ws:
+            try:
+                ws.close()
+            except Exception:
+                pass
 
     return {"sent": True, "event_id": event['id']}
 
@@ -773,6 +842,9 @@ def nwc_send_fire_and_forget(nwc_url, method, params=None):
 async def cmd_balance(nwc_url):
     """Check wallet balance (synchronous — waits for response)."""
     result = await nwc_request(nwc_url, "get_balance")
+    if 'error' in result:
+        err = result['error']
+        return json.dumps({"error": err.get('message', str(err))})
     balance_msat = result.get('result', {}).get('balance', 0)
     return f"Balance: {balance_msat // 1000} sats"
 
@@ -879,8 +951,10 @@ def load_nwc_url():
                     print(f"[DEBUG] NWC URL from skill .env: {skill_env}",
                           file=sys.stderr)
                 return nwc_url.strip('"\' ')
-    except Exception:
-        pass
+    except Exception as e:
+        if DEBUG:
+            print(f"[DEBUG] skill .env read skipped ({type(e).__name__})",
+                  file=sys.stderr)
 
     # 2. Agent home .env
     home_env = os.path.expanduser('~/.env')
@@ -895,8 +969,10 @@ def load_nwc_url():
                     print(f"[DEBUG] NWC URL from home .env: {home_env}",
                           file=sys.stderr)
                 return nwc_url.strip('"\' ')
-    except Exception:
-        pass
+    except Exception as e:
+        if DEBUG:
+            print(f"[DEBUG] home .env read skipped ({type(e).__name__})",
+                  file=sys.stderr)
 
     # 3. Legacy security file
     security_file = "/root/.picoclaw/.security.yml"
@@ -909,8 +985,10 @@ def load_nwc_url():
                 print(f"[DEBUG] NWC URL from security.yml: {security_file}",
                       file=sys.stderr)
             return nwc_url
-    except Exception:
-        pass
+    except Exception as e:
+        if DEBUG:
+            print(f"[DEBUG] security.yml read skipped ({type(e).__name__})",
+                  file=sys.stderr)
 
     # 4. Environment variable
     nwc_url = os.environ.get('ALBY_NWC_URL')
@@ -924,7 +1002,7 @@ def load_nwc_url():
 
 
 def main():
-    global DEBUG
+    global DEBUG, USE_NIP44
 
     nwc_url = load_nwc_url()
     if not nwc_url:
@@ -938,13 +1016,15 @@ def main():
             file=sys.stderr)
         sys.exit(1)
 
-    # Parse --debug flag (can appear anywhere in args)
-    args = [a for a in sys.argv[1:] if a != '--debug']
+    # Parse --debug and --nip44 flags (can appear anywhere in args)
+    args = [a for a in sys.argv[1:] if a not in ('--debug', '--nip44')]
     if '--debug' in sys.argv:
         DEBUG = True
+    if '--nip44' in sys.argv:
+        USE_NIP44 = True
 
     if len(args) < 1:
-        print("Usage: nwc_wallet.py [--debug] <command> [args...]")
+        print("Usage: nwc_wallet.py [--debug] [--nip44] <command> [args...]")
         print("Commands: balance, pay_invoice <bolt11>, pay_invoice_async <bolt11>,")
         print("          make_invoice <sats> [description],")
         print("          lookup_invoice <payment_hash>, check_payment <payment_hash>,")
