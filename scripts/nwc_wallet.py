@@ -1028,7 +1028,10 @@ def main():
         print("Commands: balance, pay_invoice <bolt11>, pay_invoice_async <bolt11>,")
         print("          make_invoice <sats> [description],")
         print("          lookup_invoice <payment_hash>, check_payment <payment_hash>,")
-        print("          list_transactions [type] [limit] [offset], get_info")
+        print("          list_transactions [type] [limit] [offset], get_info,")
+        print("          fetch <url> [--method POST] [--body JSON] [--headers JSON] [--max-amount SATS],")
+        print("          fiat_to_sats <amount> <currency>, sats_to_fiat <sats> <currency>,")
+        print("          parse_invoice <bolt11>, discover [-q QUERY] [-p PROTOCOL]")
         sys.exit(1)
 
     cmd = args[0]
@@ -1079,6 +1082,80 @@ def main():
                 cmd_list_transactions(nwc_url, tx_type, limit, offset))
         elif cmd == "get_info":
             result = asyncio.run(cmd_get_info(nwc_url))
+        elif cmd == "fetch":
+            # fetch <url> [--method POST] [--body JSON] [--headers JSON] [--max-amount SATS]
+            method = 'GET'
+            body = None
+            headers = None
+            max_amount = 0
+            url = None
+            i = 1
+            while i < len(args):
+                if args[i] == '--method' and i + 1 < len(args):
+                    method = args[i + 1].upper()
+                    i += 2
+                elif args[i] == '--body' and i + 1 < len(args):
+                    body = args[i + 1]
+                    i += 2
+                elif args[i] == '--headers' and i + 1 < len(args):
+                    headers = args[i + 1]
+                    i += 2
+                elif args[i] == '--max-amount' and i + 1 < len(args):
+                    max_amount = int(args[i + 1])
+                    i += 2
+                else:
+                    url = args[i]
+                    i += 1
+            if not url:
+                print("Usage: nwc_wallet.py fetch <url> [--method POST] [--body JSON] [--headers JSON] [--max-amount SATS]", file=sys.stderr)
+                sys.exit(1)
+            from nwc_fetch import cmd_fetch
+            result = cmd_fetch(nwc_url, url, method, body, headers, max_amount)
+        elif cmd == "fiat_to_sats":
+            if len(args) < 3:
+                print("Usage: nwc_wallet.py fiat_to_sats <amount> <currency>", file=sys.stderr)
+                sys.exit(1)
+            from nwc_fiat import fiat_to_sats
+            r = fiat_to_sats(float(args[1]), args[2])
+            result = json.dumps(r)
+        elif cmd == "sats_to_fiat":
+            if len(args) < 3:
+                print("Usage: nwc_wallet.py sats_to_fiat <sats> <currency>", file=sys.stderr)
+                sys.exit(1)
+            from nwc_fiat import sats_to_fiat
+            r = sats_to_fiat(int(args[1]), args[2])
+            result = json.dumps(r)
+        elif cmd == "parse_invoice":
+            if len(args) < 2:
+                print("Usage: nwc_wallet.py parse_invoice <bolt11>", file=sys.stderr)
+                sys.exit(1)
+            from nwc_bolt11 import parse_invoice
+            result = json.dumps(parse_invoice(args[1]))
+        elif cmd == "discover":
+            query = None
+            protocol = None
+            sort = 'reliability'
+            limit = 10
+            i = 1
+            while i < len(args):
+                if args[i] == '-q' and i + 1 < len(args):
+                    query = args[i + 1]
+                    i += 2
+                elif args[i] == '-p' and i + 1 < len(args):
+                    protocol = args[i + 1]
+                    i += 2
+                elif args[i] == '--sort' and i + 1 < len(args):
+                    sort = args[i + 1]
+                    i += 2
+                elif args[i] == '--limit' and i + 1 < len(args):
+                    limit = int(args[i + 1])
+                    i += 2
+                else:
+                    i += 1
+            from nwc_discover import discover
+            r = discover(q=query or '', protocol=protocol,
+                         sort=sort, limit=limit)
+            result = json.dumps(r)
         else:
             print(f"Unknown command: {cmd}", file=sys.stderr)
             sys.exit(1)

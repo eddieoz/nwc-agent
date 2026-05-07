@@ -178,12 +178,12 @@ hardware — exactly the gap this project fills.
 | Nostr events | Kind 23194/23195 signing | 25 | NIP-47 |
 | WebSocket relay | websocket-client | 75 | RFC 6455 |
 
-**Total: ~1,020 lines of auditable Python.** No C extensions. No assembly.
+**Total: ~1,400 lines of auditable Python.** No C extensions. No assembly.
 
 ### Wallet Commands
 
-| Command | NWC Method | Description |
-|---------|-----------|-------------|
+| Command | NWC Method / Source | Description |
+|---------|---------------------|-------------|
 | `balance` | `get_balance` | Wallet balance in satoshis |
 | `pay_invoice` | `pay_invoice` | Pay bolt11, wait for confirmation |
 | `pay_invoice_async` | `pay_invoice` | Fire-and-forget payment |
@@ -192,6 +192,23 @@ hardware — exactly the gap this project fills.
 | `check_payment` | `lookup_invoice` | Verify payment settled, return preimage |
 | `list_transactions` | `list_transactions` | Transaction history |
 | `get_info` | `get_info` | Wallet metadata |
+
+### 402 Payment Protocol Commands
+
+| Command | Source | Description |
+|---------|--------|-------------|
+| `fetch` | L402/X402/MPP auto-detect | Pay for 402-protected APIs, retry with payment proof |
+| `parse_invoice` | BOLT-11 decoder | Decode invoice: amount, hash, description, expiry |
+| `fiat_to_sats` | CoinGecko API | Convert fiat (USD, EUR, etc.) to satoshis |
+| `sats_to_fiat` | CoinGecko API | Convert satoshis to fiat |
+| `discover` | 402index.io | Find paid API services accepting Lightning |
+
+**Supported payment protocols:**
+- **L402** (LSAT) — `WWW-Authenticate: L402 token=... invoice=...` → pay → `Authorization: L402 <token>:<preimage>`
+- **X402** — `PAYMENT-REQUIRED: <base64-JSON>` → pay → `payment-signature: <base64-JSON>`
+- **MPP** (draft-lightning-charge-00) — `WWW-Authenticate: Payment method="lightning" intent="charge" ...` → pay → `Authorization: Payment <JCS-credential>`
+
+Protocol detection is fully automatic — no flags needed. The dispatcher checks response headers and routes to the correct handler.
 
 ### Network Protocol
 
@@ -321,6 +338,23 @@ python3 scripts/nwc_wallet.py --debug balance
 
 # NIP-44 encryption (ChaCha20-Poly1305, requires Alby Hub >= 1.8.0)
 python3 scripts/nwc_wallet.py --nip44 balance
+
+# Fetch a 402-protected API endpoint (auto-detects L402/X402/MPP)
+python3 scripts/nwc_wallet.py fetch https://api.example.com/v1/generate
+
+# Fetch with POST body and spending limit
+python3 scripts/nwc_wallet.py fetch --method POST --body '{"prompt":"a mountain cabin"}' --max-amount 500 "https://api.example.com/v1/generate"
+
+# Fiat / sats conversion
+python3 scripts/nwc_wallet.py fiat_to_sats 10 USD
+python3 scripts/nwc_wallet.py sats_to_fiat 1000 EUR
+
+# Parse a bolt11 invoice
+python3 scripts/nwc_wallet.py parse_invoice lnbc2500u1pvjluez...
+
+# Discover paid APIs on 402index.io
+python3 scripts/nwc_wallet.py discover -q "image generation"
+python3 scripts/nwc_wallet.py discover -p x402 --limit 20
 ```
 
 ## Security Audit
@@ -349,13 +383,20 @@ supports NIP-44 (Alby Hub >= 1.8.0, check your wallet's docs for others).
 ```
 nwc-agent/
 ├── scripts/
-│   └── nwc_wallet.py      ← Core wallet (pure Python, zero crypto deps)
-├── requirements.txt         ← 3 packages: pyaes, websocket-client, pyyaml
-├── .env.example             ← Template for credentials (copy to .env)
-├── .gitignore               ← Blocks .env, __pycache__
-├── README.md               ← This file
-├── SKILL.md                ← Agent skill definition
-└── _meta.json              ← Skill registry metadata
+│   ├── nwc_wallet.py      ← Core wallet + CLI (pure Python, zero crypto deps)
+│   ├── nwc_bolt11.py      ← BOLT-11 invoice parser (bech32, tagged fields)
+│   ├── nwc_l402.py        ← L402 protocol handler (WWW-Authenticate parser)
+│   ├── nwc_x402.py        ← X402 protocol handler (PAYMENT-REQUIRED parser)
+│   ├── nwc_mpp.py         ← MPP protocol handler (JCS + base64url)
+│   ├── nwc_fetch.py       ← Protocol dispatcher (auto-detect + urllib)
+│   ├── nwc_fiat.py        ← Fiat/satoshi conversion (CoinGecko API)
+│   └── nwc_discover.py    ← 402index.io service discovery
+├── requirements.txt       ← 3 packages: pyaes, websocket-client, pyyaml
+├── .env.example           ← Template for credentials (copy to .env)
+├── .gitignore             ← Blocks .env, __pycache__
+├── README.md              ← This file
+├── SKILL.md               ← Agent skill definition (commands + protocols)
+└── _meta.json             ← Skill registry metadata
 ```
 
 ## References & Acknowledgments
