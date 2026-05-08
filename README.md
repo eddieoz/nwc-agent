@@ -267,11 +267,12 @@ Key security properties:
   (Alby Hub, LNCURL, CoinOS, Rizful, etc.)
 
 ### Installation
+
 ```bash
-git clone https://github.com/eddieoz/nwc-agent
 cd nwc-agent
 pip install -r requirements.txt
 ```
+> **Setup:** Clone repository from github.com/eddieoz/nwc-agent, then install dependencies.
 ### Configuration
 
 The wallet loads its NWC URL through a priority-gated chain. The first match

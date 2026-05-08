@@ -180,7 +180,7 @@ def _der_encode_sequence(data):
 
 def _der_encode_integer(val):
     if val == 0:
-        return b'\x02\x01\x00'
+        return bytes([2, 1, 0])
     b = int_to_bytes(val)
     if b[0] & 0x80:
         b = b'\x00' + b
@@ -991,7 +991,7 @@ def load_nwc_url():
                   file=sys.stderr)
 
     # 4. Environment variable
-    nwc_url = os.environ.get('ALBY_NWC_URL')
+    nwc_url = os.getenv('ALBY_NWC_URL')
     if nwc_url:
         if DEBUG:
             print("[DEBUG] NWC URL from ALBY_NWC_URL env var",

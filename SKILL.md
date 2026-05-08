@@ -17,6 +17,7 @@ metadata:
       bins:
         - python3
         - openssl
+        - jq
     emoji: "⚡"
 ---
 
@@ -130,8 +131,8 @@ Reuse pattern:
 RESULT=$(python3 scripts/nwc_wallet.py fetch "<url>")
 
 # Save the credentials
-PREIMAGE=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['preimage'])")
-MACAROON=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['macaroon'])")
+PREIMAGE=$(echo "$RESULT" | jq -r '.preimage')
+MACAROON=$(echo "$RESULT" | jq -r '.macaroon')
 
 # ALL subsequent requests: reuse credentials (NO new payment)
 curl -s "<url>" -H "Authorization: L402 ${MACAROON}:${PREIMAGE}"
