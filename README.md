@@ -26,9 +26,9 @@ glibc. Try installing any of them on a RISC-V board running musl libc and
 you'll spend hours fighting toolchain errors.
 
 This project closes that gap. It implements every cryptographic primitive in
-pure Python — secp256k1 point arithmetic, BIP-340 Schnorr signatures,
-ChaCha20-Poly1305 encryption, HKDF — all in auditable, readable code. If Python
-runs, the wallet runs.
+pure Python — secp256k1 point arithmetic, BIP-340 Schnorr signatures with
+RFC 6979 deterministic nonces, ChaCha20-Poly1305 encryption, HKDF — all in
+auditable, readable code. If Python runs, the wallet runs.
 
 On top of basic wallet operations, it auto-detects three HTTP 402 payment
 protocols (L402, X402, MPP), enabling agents to pay for API access at the
@@ -143,4 +143,6 @@ MIT — free to use, modify, and redistribute. See [LICENSE](LICENSE).
 - **Issues:** [github.com/eddieoz/nwc-agent/issues](https://github.com/eddieoz/nwc-agent/issues)
 - **Author:** [EddieOz](https://eddieoz.com)
 - **Specifications:** [NIP-47 (Nostr Wallet Connect)](https://nips.nostr.com/47),
-  [L402 Protocol](https://docs.lightning.engineering/the-lightning-network/l402)
+  [L402 Protocol](https://docs.lightning.engineering/the-lightning-network/l402),
+  [BIP-340 (Schnorr Signatures)](https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki),
+  [RFC 6979 (Deterministic Nonces)](https://datatracker.ietf.org/doc/html/rfc6979)
