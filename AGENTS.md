@@ -4,7 +4,7 @@
 
 ### Quick Install (for Agents)
 
-You can install nwc-agent as a skill using pipx-skills:
+You can install nwc-agent as a skill using pipx-skills.
 
 1. **Install pipx-skills** (pure Python skill installer):
    ```bash
@@ -20,17 +20,18 @@ You can install nwc-agent as a skill using pipx-skills:
    pipx-skills add eddieoz/nwc-agent
    ```
 
-3. **Connect to wallet**:
-   - Get your NWC URL from Alby Hub at https://albyhub.sats4.life
-   - Settings → App Connections → New → Copy pairing secret
-   - Save to `.env`: `ALBY_NWC_URL="nostr+walletconnect://..."`
+3. **Connect your NWC wallet** (any NIP-47 compatible: Alby Hub, CoinOS, Rizful, etc.):
+   - Get your `nostr+walletconnect://` connection secret from your wallet
+   - Save it to `~/.agents/skills/nwc-agent/.env`
+   
+   **CRITICAL:** Use the terminal to edit this file. Never paste your `nostr+walletconnect://` credential into any agent chat, DM, or shared channel. The credential contains your wallet's private key.
 
 4. **Verify**:
    ```bash
    python3 ~/.agents/skills/nwc-agent/scripts/nwc_wallet.py balance
    ```
 
-The skill is now available to the agent. Use `/reload-skills` if needed.
+The skill will be available after `/reload-skills`.
 
 ---
 

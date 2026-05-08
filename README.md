@@ -49,16 +49,25 @@ If nwc-agent has helped you build something useful, consider
 
 ### For Agents (Hermes/OpenClaw)
 
-```
-Run pipx install pipx-skills and connect to your Alby Hub wallet at https://albyhub.sats4.life
-```
+Install via pipx-skills (pure Python, works on any platform Python runs):
 
-Then install the skill:
 ```bash
+pipx install pipx-skills
 pipx-skills add eddieoz/nwc-agent
 ```
 
-The skill will be available in the agent automatically after `/reload-skills`.
+Then connect your NWC wallet (e.g., Alby Hub, CoinOS, Rizful, or any NIP-47 compatible wallet) and save your `nostr+walletconnect://` credential to:
+
+```
+~/.agents/skills/nwc-agent/.env
+```
+
+**Security:** Use the terminal to create/edit this file directly. Do NOT paste your wallet credentials into any agent chat or shared channel.
+
+Verify the connection:
+```bash
+python3 ~/.agents/skills/nwc-agent/scripts/nwc_wallet.py balance
+```
 
 ### Manual Installation
 
