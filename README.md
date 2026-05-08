@@ -59,7 +59,9 @@ pipx-skills add eddieoz/nwc-agent
 Then connect your NWC wallet (e.g., Alby Hub, CoinOS, Rizful, or any NIP-47 compatible wallet) and save your `nostr+walletconnect://` credential to:
 
 ```
-~/.agents/skills/nwc-agent/.env
+cp .env.example .env
+# Paste your NWC URL into .env
+
 ```
 
 **Security:** Use the terminal to create/edit this file directly. Do NOT paste your wallet credentials into any agent chat or shared channel.
