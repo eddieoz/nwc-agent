@@ -9,7 +9,7 @@ description: >
 license: MIT
 metadata:
   author: eddieoz
-  version: "1.4.0"
+  version: "1.5.0"
   openclaw:
     requires:
       env:
@@ -103,6 +103,55 @@ The `fetch` command automatically handles three payment protocols:
 **MPP (draft-lightning-charge-00):** Server returns `WWW-Authenticate: Payment method="lightning" intent="charge" ...`. Client decodes base64url challenge, pays invoice, retries with `Authorization: Payment <JCS-credential>`.
 
 Protocol detection is automatic — pass the URL to `fetch` and it figures out which protocol to use.
+
+### Credential Reuse (CRITICAL — READ THIS)
+
+**After a successful `fetch` to an L402 endpoint, ALWAYS save the macaroon and preimage from the output.**
+
+The `fetch` command returns these fields on success:
+```json
+{
+  "status": 200,
+  "content": "<response data>",
+  "paid": true,
+  "amount_paid_sats": 3,
+  "protocol": "l402",
+  "preimage": "<64-char hex>",
+  "macaroon": "<base64-macaroon>",
+  "auth_header": "Authorization: L402 <macaroon>:<preimage>"
+}
+```
+
+**For ALL subsequent requests to the same proxy/path, use the saved credentials directly. Do NOT call `fetch` again — that would trigger a new 402 challenge and a new payment.**
+
+Reuse pattern:
+```bash
+# First request: pay and get credentials
+RESULT=$(python3 scripts/nwc_wallet.py fetch "<url>")
+
+# Save the credentials
+PREIMAGE=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['preimage'])")
+MACAROON=$(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin)['macaroon'])")
+
+# ALL subsequent requests: reuse credentials (NO new payment)
+curl -s "<url>" -H "Authorization: L402 ${MACAROON}:${PREIMAGE}"
+curl -s "<url-2>" -H "Authorization: L402 ${MACAROON}:${PREIMAGE}"
+```
+
+The macaroon+preimage pair is valid until the macaroon expires (check the `expires_at` field in the 402 response body). Pay once, use many times.
+
+### Following Endpoint Instructions
+
+Many L402 proxies include an `instructions` block in the 402 response body:
+```json
+"instructions": {
+  "step1": "Pay the Lightning invoice using any Lightning wallet",
+  "step2": "Copy the preimage (proof of payment) from your wallet",
+  "step3": "Include in request: Authorization: L402 <macaroon>:<preimage>"
+}
+```
+
+**Always read and follow these instructions.** They specify the exact auth header format expected by that endpoint. The `fetch` command handles this automatically on the first call, but if you're reusing credentials manually, match the auth format from the instructions.
 
 ## Discovering Paid Services
 
@@ -242,6 +291,33 @@ If balance returns correctly, all crypto, relay, and wallet connections are func
 | `fetch` returns "Invoice amount exceeds max-amount" | Endpoint charges more than `--max-amount` limit | Tell user the cost and let them decide whether to increase or remove the limit. |
 | `fetch` returns "amount mismatch" (X402) | Invoice amount doesn't match PAYMENT-REQUIRED declaration | Server-side issue — report to the user. The payment is not made. |
 | `discover` returns empty results | No services match the query | Suggest broader queries or different protocols. Try without `-p` filter. |
+| `fetch` retry returns "invoice already been paid" | Proxy issues same invoice for same path regardless of query params | Use the saved credentials (macaroon + preimage) from the `fetch` output with `curl`. See **Credential Reuse** section above. |
+| Agent pays for same endpoint multiple times | Agent is calling `fetch` repeatedly instead of reusing credentials | After the first `fetch`, save the macaroon and preimage. Use `curl` with `Authorization: L402 <macaroon>:<preimage>` for all subsequent requests. **Never call `fetch` twice for the same proxy.** |
+| `fetch` succeeds but returns 400 "field required" | Endpoint requires query params (e.g. `topic`) that weren't passed | Add query params to the URL and retry. If invoice is reused (see above), use manual auth. |
+
+## Manual L402 Authorization (when you need more control)
+
+The preferred approach is to use `fetch` once, then reuse the returned credentials (see **Credential Reuse** above). Manual authorization is only needed when:
+
+- You received the macaroon+invoice from a source other than `fetch`
+- You need to construct auth headers for a language/format not supported by `curl`
+- You're debugging the L402 flow step-by-step
+
+```bash
+# Step 1: Get the 402 challenge and extract macaroon + payment_hash
+curl -s -i "<url>" | grep -o 'macaroon="[^"]*"' | cut -d'"' -f2 > /tmp/macaroon.b64
+# payment_hash is in the JSON body or invoice
+
+# Step 2: Pay the invoice, or look up existing payment
+python3 scripts/nwc_wallet.py check_payment <payment_hash>
+# → returns preimage (or: pay_invoice <bolt11> if not yet paid)
+
+# Step 3: Construct Authorization header and retry
+MACAROON=$(cat /tmp/macaroon.b64)
+curl -s "<url>" -H "Authorization: L402 ${MACAROON}:<preimage>"
+```
+
+This pattern is also useful when making requests to the same proxy with different query parameters — pay once, reuse the macaroon+preimage pair until it expires.
 
 ## Paying Lightning Addresses
 
@@ -260,3 +336,5 @@ The wallet does NOT natively resolve Lightning Addresses (user@domain.com). To p
 - [NIP-47: Nostr Wallet Connect](https://nips.nostr.com/47)
 - [NIP-44: Encryption](https://nips.nostr.com/44)
 - [BIP-340: Schnorr Signatures](https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki)
+- [lightningenable.com L402 Proxies](references/lightningenable-l402-proxies.md) — Smart Wikipedia + Weather Intel proxy endpoints, pricing, quirks, and sample responses
+- [Debugging L402 Payment Flows](references/debugging-l402-flows.md) — Inspect raw 402 responses, verify payments, diagnose common issues

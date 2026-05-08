@@ -91,33 +91,54 @@ def _make_request(url, method='GET', body=None, headers=None):
                 dict(e.headers))
 
 
-def _find_protocol(status_code, response_headers):
+def _find_protocol(status_code, response_headers, response_body=None):
     """Detect which payment protocol the server is using.
 
     Priority order: L402 → MPP → X402
 
+    First checks HTTP headers (WWW-Authenticate, PAYMENT-REQUIRED).
+    If no protocol is detected from headers, falls back to inspecting
+    the response body for L402 data (JSON with l402.invoice field).
+
     Returns:
-        ('l402|mpp|x402', header_value) or (None, None)
+        ('l402|mpp|x402', header_or_body_value) or (None, None)
     """
     if status_code != 402:
         return None, None
 
     www_auth = response_headers.get('WWW-Authenticate', '')
 
-    # L402 / LSAT
+    # L402 / LSAT (from headers)
     if www_auth:
         lower = www_auth.lower().strip()
         if lower.startswith('l402') or lower.startswith('lsat'):
             return 'l402', www_auth
 
-    # MPP (Payment method=lightning intent=charge)
+    # MPP (Payment method=lightning intent=charge) (from headers)
     if www_auth and parse_mpp_challenge(www_auth):
         return 'mpp', www_auth
 
-    # X402
+    # X402 (from headers)
     x402_header = response_headers.get('PAYMENT-REQUIRED', '')
     if x402_header and find_lightning_requirements(x402_header):
         return 'x402', x402_header
+
+    # Fallback: inspect response body for L402 data
+    # Some proxies (e.g. lightningenable) include l402.macaroon + l402.invoice
+    # in the JSON body even when WWW-Authenticate header is present.
+    # This also covers proxies that only put L402 data in the body.
+    if response_body:
+        try:
+            body_json = json.loads(response_body)
+            l402_data = body_json.get('l402', {})
+            if l402_data.get('invoice'):
+                # Construct a synthetic WWW-Authenticate value from body data
+                macaroon = l402_data.get('macaroon', '')
+                invoice = l402_data.get('invoice', '')
+                synthetic_header = f'L402 macaroon="{macaroon}", invoice="{invoice}"'
+                return 'l402', synthetic_header
+        except (json.JSONDecodeError, AttributeError):
+            pass
 
     return None, None
 
@@ -161,7 +182,7 @@ def cmd_fetch(nwc_url, url, method='GET', body=None, headers=None,
         })
 
     # Step 2: Detect protocol
-    protocol, header_value = _find_protocol(status, resp_headers)
+    protocol, header_value = _find_protocol(status, resp_headers, body_text)
     if not protocol:
         return json.dumps({
             "error": "402 Payment Required but no supported payment protocol detected",
@@ -214,7 +235,9 @@ def cmd_fetch(nwc_url, url, method='GET', body=None, headers=None,
             "paid": True,
             "amount_paid_sats": paid_amount,
             "protocol": protocol,
-            "preimage": preimage[:16] + '...',
+            "preimage": preimage,
+            "macaroon": parsed.get('token', ''),
+            "auth_header": f"{auth_header_name}: {auth_header}",
         })
 
     except ValueError as e:
