@@ -2,6 +2,40 @@
 
 ## If You're an AI Agent Using This Library
 
+### Quick Install (for Agents)
+
+You can install nwc-agent as a skill using pipx-skills:
+
+1. **Install pipx-skills** (pure Python skill installer):
+   ```bash
+   pipx install pipx-skills          # Recommended (isolated)
+   # or
+   pip install pipx-skills          # With pip
+   # or  
+   uv pip install pipx-skills       # With uv
+   ```
+
+2. **Install the skill**:
+   ```bash
+   pipx-skills add eddieoz/nwc-agent
+   ```
+
+3. **Connect to wallet**:
+   - Get your NWC URL from Alby Hub at https://albyhub.sats4.life
+   - Settings → App Connections → New → Copy pairing secret
+   - Save to `.env`: `ALBY_NWC_URL="nostr+walletconnect://..."`
+
+4. **Verify**:
+   ```bash
+   python3 ~/.agents/skills/nwc-agent/scripts/nwc_wallet.py balance
+   ```
+
+The skill is now available to the agent. Use `/reload-skills` if needed.
+
+---
+
+### Security Rules
+
 You are holding spending power. This is not a toy.
 
 - All output is JSON to stdout, errors to stderr. Parse exit codes before trusting output.
